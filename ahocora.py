@@ -31,7 +31,8 @@ class AC:
         self.O = defaultdict(set)                # outputs
         self.F = {}                              # failure
         self._W = defaultdict(set)               # alphabet
-        self._built = False
+        self._built = False                      # is DFA built ?
+        self._deter = None                       # is DFA deterministic ?
 
 
     def add(self, word):
@@ -55,12 +56,21 @@ class AC:
         self.O[state].add(word)
 
 
-    def build(self):
+    def build(self, deterministic=False):
         """
         Finish the automata building.
 
-        This function must be called once before searching.
+        This method must be called once before searching.
+
+        The deterministic argument controls if failures states
+        will be used in later searching (uses less memory)
+        or transitions will be added to make the automata 
+        deterministic (may be more efficient, but can grealy 
+        increase the memory usage).
+        Default value (False) is safe for normal usage.
         """
+
+        assert not self._built, "already built"
 
         # optimization
         W = self._W
@@ -68,6 +78,7 @@ class AC:
         F = self.F
         O = self.O
         getG = G.get
+        getF = F.get
 
         # disable defaultdict behavior
         self.G.default_factory = None
@@ -82,9 +93,6 @@ class AC:
 
         while queue:
             r = queue.popleft()
-
-            if r not in W:  # don't overpopulate W
-                continue
 
             # for each letter in alphabet
             for a in W[r]:
@@ -105,13 +113,25 @@ class AC:
                     out = O[s]      # retrieve or create output ensemble
                     out |= O[fs]    # union with this output
 
+            if deterministic:
+                f = r
+                while f != 0:
+                    f = getF(f, 0)
+                    for a in W[f]:
+                        if (r, a) not in G:
+                            G[r, a] = G[f, a]
+
         # remove unused
-        del self._W
+        self._W = None
+
+        if deterministic:
+            self.F = None
 
         # disable defaultdict behavior
         self.O.default_factory = None
 
         self._built = True
+        self._deter = deterministic
 
 
     def search(self, text):
@@ -131,15 +151,25 @@ class AC:
 
         state = 0
 
-        for i, c in enumerate(text, 1):
-            # fallback
-            while state != 0 and (state, c) not in G:
-                state = F[state]
+        if self._deter:
+            for i, c in enumerate(text, 1):
+                # direct transition
+                state = getG((state, c), 0)
 
-            # transition
-            state = getG((state, c), 0)
+                # output
+                if state in O:
+                    for w in O[state]:
+                        yield w, i - len(w)
+        else:
+            for i, c in enumerate(text, 1):
+                # fallback
+                while state != 0 and (state, c) not in G:
+                    state = F[state]
 
-            # output
-            if state in O:
-                for w in O[state]:
-                    yield w, i - len(w)
+                # transition
+                state = getG((state, c), 0)
+
+                # output
+                if state in O:
+                    for w in O[state]:
+                        yield w, i - len(w)
